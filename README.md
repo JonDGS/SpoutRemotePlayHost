@@ -48,7 +48,7 @@ This is the PC half of SpoutRemotePlay. It does **not** stream anything itself. 
 |---|---|
 | 🖥️ **Virtual monitor per device** | On Linux, resolution and refresh rate come from that device's settings. On Windows, Steam sizes its own display. |
 | ⭐ **Primary while streaming** | The virtual monitor is your main display during the session, so Steam streams it. |
-| 🌑 **Other displays off** (Windows) | Every other display turns off during the session, except ones you choose to keep on. Linux doesn't turn displays off yet. |
+| 🌑 **Other displays off** | Every other display turns off during the session and comes back when it ends. On Windows you can choose displays to keep on. |
 | 🔐 **Paired devices only** | Unpaired clients never get a monitor. |
 | 🧩 **Apps** | Add programs to Steam from the web page, with optional artwork. |
 | ⏻ **Shut down** | A paired device can shut the PC down, for example from the Decky plugin. |
