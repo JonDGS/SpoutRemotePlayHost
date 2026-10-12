@@ -127,7 +127,7 @@ How it stays safe:
    - It adds a sudoers rule limited to `/usr/local/libexec/spout-vdisplay`. Pass `--no-driver` to skip the driver.
 4. The service listens on `0.0.0.0:47995` so the Decky plugin can reach it. Other machines still need a token.
 
-Requirements: **KDE Plasma on Wayland** and **Linux 6.16 or newer**. The Linux backend uses the `vibeshine_drm` kernel module (the same driver ArtLight uses) and `kscreen-doctor`.
+Tested on: **KDE Plasma on Wayland** with **Linux 6.16 or newer**. Other setups haven't been tried, so they may or may not work. The Linux backend uses the `vibeshine_drm` kernel module (the same driver ArtLight uses) and `kscreen-doctor`.
 
 Tested by streaming from a Linux PC to an AYN Odin 2 Portal: the host made a virtual display for the stream and removed it afterwards.
 
