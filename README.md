@@ -179,7 +179,7 @@ The **Apps** tab adds programs to this PC's Steam library as non-Steam shortcuts
 
 Two independent signals tell the host a stream started, so it doesn't rely on one fragile hook:
 
-- **From the handheld:** the plugin reports Steam's Remote Play start and stop to every paired PC (`POST /api/session`, using the device's own token).
+- **From the handheld:** the plugin reports Steam's Remote Play start and stop to the PC you're streaming from (`POST /api/session`, using the device's own token).
 - **From the PC:** the host reads Steam's `streaming_log.txt`. A start looks like "Streaming started to <device>…". The end is "PipeWire: Deinitializing streaming" on Linux and "Encoding complete" on Windows.
 
 Only **paired** devices get a virtual monitor. A session from an unpaired client (or a plugin call using the API token instead of a device token) is logged and ignored. The monitor uses that device's settings, survives a stream restart or reconnect (90 s grace on Windows, 5 s on Linux), and is only removed by the device that owns it.
