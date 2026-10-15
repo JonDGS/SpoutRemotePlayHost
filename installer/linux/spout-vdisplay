@@ -6,7 +6,9 @@ set -euo pipefail
 
 CONFIGFS="${SPOUT_CONFIGFS:-/sys/kernel/config}"
 DRM_ROOT="$CONFIGFS/vibeshine-drm"
-DEV="$DRM_ROOT/spout"
+NAME=spout
+DEV="$DRM_ROOT/$NAME"
+FAUX="${SPOUT_SYSFS_FAUX:-/sys/devices/faux}"
 SYSFS_DRM="${SPOUT_SYSFS_DRM:-/sys/class/drm}"
 MODULE=vibeshine_drm
 
@@ -34,9 +36,13 @@ destroy() {
 }
 
 connector_name() {
-  local d
-  # The module may also have been loaded with a default device (disconnected); only ours is connected.
-  for d in "$SYSFS_DRM"/card*-Virtual-*; do
+  local d candidates
+  # The kernel names the device after our configfs entry, so look at its card first. Other
+  # devices on the same module (a default device, or another app such as ArtLight) can have
+  # connected Virtual-N outputs of their own. Fall back to any connected one for older drivers.
+  candidates=("$FAUX/$NAME"/drm/card*/card*-Virtual-*)
+  [[ -e "${candidates[0]}" ]] || candidates=("$SYSFS_DRM"/card*-Virtual-*)
+  for d in "${candidates[@]}"; do
     [[ -e "$d" ]] || continue
     [[ "$(cat "$d/status" 2>/dev/null)" == connected ]] || continue
     basename "$d" | sed 's/^card[0-9]*-//'

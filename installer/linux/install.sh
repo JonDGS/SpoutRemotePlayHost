@@ -76,6 +76,15 @@ install_driver() {
   if ! command -v kscreen-doctor >/dev/null; then
     warn "kscreen-doctor not found: the virtual display needs KDE Plasma. Continuing."
   fi
+  # Another app (e.g. ArtLight) may already ship vibeshine_drm. Reuse it instead of building ours:
+  # our DKMS copy installs to /updates, which takes precedence and would replace theirs.
+  local existing
+  existing="$(foreign_driver "$kver")" && {
+    say "Reusing the installed virtual display driver ($existing); not building our own"
+    install_helper
+    load_driver
+    return
+  }
   say "Installing the virtual display driver (needs sudo; builds a kernel module with DKMS)"
   if ! command -v dkms >/dev/null || ! has_headers "$kver"; then
     say "Installing build dependencies (dkms, kernel headers)"
@@ -98,13 +107,36 @@ install_driver() {
   printf '#define VIBESHINE_DRM_VERSION "%s"\n' "$drm_ver" | sudo tee "$drm_dir/vibeshine_drm_version.h" >/dev/null
   sudo dkms remove "vibeshine-drm/$drm_ver" --all >/dev/null 2>&1 || true
   sudo dkms install "vibeshine-drm/$drm_ver" -k "$build_for" --force || { warn "driver build failed"; return 1; }
+  install_helper || return 1
+
+  if [[ "$build_for" != "$kver" ]]; then
+    warn "REBOOT into kernel $build_for to enable the virtual display (the host works now; the monitor will appear after the reboot)."
+  else
+    load_driver
+  fi
+}
+
+# Prints the version of a vibeshine_drm for kernel $1 that this installer did not build, if any.
+foreign_driver() {
+  local kver="$1" file ver
+  file="$(modinfo -k "$kver" -F filename vibeshine_drm 2>/dev/null)" || return 1
+  [[ -n "$file" ]] || return 1
+  # Ours is the DKMS build in /updates/dkms; anything else came from another package.
+  [[ "$file" != */updates/dkms/* ]] || return 1
+  ver="$(modinfo -k "$kver" -F version vibeshine_drm 2>/dev/null)"
+  echo "vibeshine_drm ${ver:-unknown version}"
+}
+
+install_helper() {
   sudo install -D -m 0755 -o root -g root "$here/spout-vdisplay" "$helper"
   printf '%s ALL=(root) NOPASSWD: %s\n' "$(id -un)" "$helper" | sudo tee "$sudoers" >/dev/null
   sudo chmod 0440 "$sudoers"
   sudo visudo -cf "$sudoers" >/dev/null || { sudo rm -f "$sudoers"; warn "invalid sudoers entry removed"; return 1; }
+}
 
-  if [[ "$build_for" != "$kver" ]]; then
-    warn "REBOOT into kernel $build_for to enable the virtual display (the host works now; the monitor will appear after the reboot)."
+load_driver() {
+  if [[ -d /sys/module/vibeshine_drm ]]; then
+    say "Virtual display driver already loaded"
   elif ! sudo modprobe vibeshine_drm create_default_dev=0; then
     if command -v mokutil >/dev/null && mokutil --sb-state 2>/dev/null | grep -qi enabled; then
       warn "Secure Boot rejected the driver's signing key. One-time setup: choose a password now, reboot, then pick Enroll MOK > Continue > Yes and enter it."
