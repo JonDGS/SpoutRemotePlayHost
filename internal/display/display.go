@@ -33,6 +33,17 @@ func keepOutputs() []string {
 	return KeepOutputs()
 }
 
+// Persistent, when set before New, keeps one virtual monitor connected for the whole time
+// the host runs (Linux only; ignored elsewhere), instead of creating one per session.
+//
+// Steam on Wayland captures through the xdg-desktop-portal. It opens that capture when the
+// stream starts, before the host sees the session, and the portal grant is tied to one
+// screen. A monitor that only appears once the session starts is never captured, and a
+// "Full Workspace" grant breaks as soon as the other displays turn off. With a persistent
+// monitor the user grants Steam that screen once; sessions then only change its mode,
+// make it primary and turn the other displays off.
+var Persistent *Mode
+
 // Manager creates and removes the virtual monitor used for a session.
 type Manager interface {
 	Create(Mode) error

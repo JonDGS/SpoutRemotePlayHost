@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -66,6 +67,7 @@ func sessionEnv(env []string) []string {
 // allows only that helper) and then applies the mode to the KWin output with kscreen-doctor.
 // While it exists, the virtual monitor is the main display and the other displays are off.
 type vdisplay struct {
+	mu     sync.Mutex // the persistent monitor is set up from a goroutine at start
 	run    runner
 	sleep  func(time.Duration)
 	keep   func() []string
@@ -73,15 +75,26 @@ type vdisplay struct {
 
 	layoutPath string          // where the pre-session layout is kept; empty disables isolation
 	saved      []kscreenOutput // displays turned off for this session
+	persistent *Mode           // keep one monitor connected between sessions (see Persistent)
 }
 
 func newBackend() backend {
-	v := &vdisplay{run: execRunner, sleep: time.Sleep, keep: keepOutputs, layoutPath: layoutFile()}
-	go v.recoverLayout(24, 5*time.Second)
+	v := &vdisplay{run: execRunner, sleep: time.Sleep, keep: keepOutputs, layoutPath: layoutFile(), persistent: Persistent}
+	go func() {
+		v.recoverLayout(24, 5*time.Second)
+		if v.persistent != nil {
+			v.startPersistent(*v.persistent, 24, 5*time.Second)
+		}
+	}()
 	return v
 }
 
 func (v *vdisplay) create(m Mode) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.persistent != nil {
+		return v.createPersistent(m)
+	}
 	// Read the layout before the virtual monitor appears, so it can be put back afterwards.
 	var before []kscreenOutput
 	if v.layoutPath != "" {
@@ -159,6 +172,11 @@ func (v *vdisplay) restore() error {
 }
 
 func (v *vdisplay) destroy() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.persistent != nil {
+		return v.destroyPersistent()
+	}
 	// Turn the real displays back on before the virtual one goes. If they did not come
 	// back, keep the virtual monitor: removing it would leave KWin with no screen at all.
 	if err := v.restore(); err != nil {

@@ -39,6 +39,7 @@ func main() {
 	signinListen := flag.String("signin-listen", signin.DefaultListen, "address for the sign-in service")
 	startSteam := flag.Bool("start-steam", true, "Windows: with -background, start Steam if it isn't running 5 seconds after sign-in")
 	signinType := flag.Bool("signin-type", false, "internal: type the PIN read from stdin into the sign-in screen")
+	persistent := flag.String("persistent-display", "", "Linux: keep one virtual monitor connected while the host runs, e.g. 2560x1600@144 (experimental; lets Steam's PipeWire capture be granted that screen once)")
 	flag.Parse()
 
 	if *signinType {
@@ -103,6 +104,13 @@ func main() {
 		go ensureSteam(5 * time.Second)
 	}
 
+	if *persistent != "" {
+		var m display.Mode
+		if _, err := fmt.Sscanf(*persistent, "%dx%d@%d", &m.Width, &m.Height, &m.RefreshHz); err != nil {
+			fatal(fmt.Errorf("-persistent-display wants WIDTHxHEIGHT@HZ: %w", err))
+		}
+		display.Persistent = &m
+	}
 	disp := display.New()
 	display.KeepOutputs = store.KeepDisplays
 
