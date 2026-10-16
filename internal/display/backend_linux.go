@@ -105,9 +105,11 @@ func (v *vdisplay) create(m Mode) error {
 
 	// KWin picks up the hotplug asynchronously; the output may not be listed for a moment.
 	arg := fmt.Sprintf("output.%s.mode.%dx%d@%d", name, m.Width, m.Height, m.RefreshHz)
+	// KWin picks a scale from the reported panel size; the stream should be 1:1.
+	scale := fmt.Sprintf("output.%s.scale.1", name)
 	var last string
 	for i := 0; i < 20; i++ {
-		last, err = v.run("kscreen-doctor", fmt.Sprintf("output.%s.enable", name), arg)
+		last, err = v.run("kscreen-doctor", fmt.Sprintf("output.%s.enable", name), arg, scale)
 		if err == nil {
 			v.isolate(name, before)
 			return nil
@@ -136,27 +138,33 @@ func (v *vdisplay) isolate(virt string, before []kscreenOutput) {
 	v.saved = before
 	if out, err := v.run("kscreen-doctor", isolateArgs(virt, before, keep)...); err != nil {
 		log.Printf("could not turn other displays off: %v: %s", err, out)
-		v.restore()
+		if err := v.restore(); err != nil {
+			log.Println(err)
+		}
 	}
 }
 
 // restore puts back the layout saved by isolate. On failure the saved file stays, so the
 // next start of the host tries again.
-func (v *vdisplay) restore() {
+func (v *vdisplay) restore() error {
 	if len(v.saved) == 0 {
-		return
+		return nil
 	}
 	if err := applyRestore(v.run, v.saved); err != nil {
-		log.Println("could not restore the display layout:", err)
-		return
+		return fmt.Errorf("could not restore the display layout: %w", err)
 	}
 	v.saved = nil
 	_ = os.Remove(v.layoutPath)
+	return nil
 }
 
 func (v *vdisplay) destroy() error {
-	// Turn the real displays back on before the virtual one goes, so KWin always has one.
-	v.restore()
+	// Turn the real displays back on before the virtual one goes. If they did not come
+	// back, keep the virtual monitor: removing it would leave KWin with no screen at all.
+	if err := v.restore(); err != nil {
+		log.Println(err)
+		return fmt.Errorf("%w; keeping the virtual monitor so the desktop stays visible", err)
+	}
 	out, err := v.run("sudo", "-n", helperPath, "destroy")
 	if err != nil {
 		return fmt.Errorf("destroy virtual display: %w: %s", err, out)

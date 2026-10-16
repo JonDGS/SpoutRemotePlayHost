@@ -31,7 +31,7 @@ func TestLinuxCreateAppliesModeAndDestroys(t *testing.T) {
 	if v.output != "Virtual-1" || len(calls) != 4 {
 		t.Fatalf("%q %v", v.output, calls)
 	}
-	if want := "kscreen-doctor output.Virtual-1.enable output.Virtual-1.mode.1920x1080@60"; calls[3] != want {
+	if want := "kscreen-doctor output.Virtual-1.enable output.Virtual-1.mode.1920x1080@60 output.Virtual-1.scale.1"; calls[3] != want {
 		t.Fatalf("got %q", calls[3])
 	}
 	if err := v.destroy(); err != nil || v.output != "" {

@@ -14,6 +14,16 @@ import (
 	"time"
 )
 
+// kscreenMode is one entry of an output's mode list.
+type kscreenMode struct {
+	ID          string  `json:"id"`
+	RefreshRate float64 `json:"refreshRate"`
+	Size        struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	} `json:"size"`
+}
+
 // kscreenOutput is the part of `kscreen-doctor -j` the host needs.
 type kscreenOutput struct {
 	Name          string `json:"name"`
@@ -29,6 +39,13 @@ type kscreenOutput struct {
 		Width  int `json:"width"`
 		Height int `json:"height"`
 	} `json:"size"`
+	Modes []kscreenMode `json:"modes,omitempty"`
+
+	// Saved with the layout: KWin renumbers mode IDs when outputs come and go, so the
+	// mode is restored by size and refresh rate, not by ID.
+	Width   int     `json:"savedWidth,omitempty"`
+	Height  int     `json:"savedHeight,omitempty"`
+	Refresh float64 `json:"savedRefresh,omitempty"`
 }
 
 func isVirtual(name string) bool { return strings.HasPrefix(name, "Virtual-") }
@@ -51,15 +68,43 @@ func readLayout(run runner) ([]kscreenOutput, error) {
 	return cfg.Outputs, nil
 }
 
-// physical returns the connected, enabled outputs that are not virtual monitors.
+// physical returns the connected, enabled outputs that are not virtual monitors, with
+// their current mode recorded by size and refresh rate.
 func physical(outs []kscreenOutput) []kscreenOutput {
 	var list []kscreenOutput
 	for _, o := range outs {
-		if o.Connected && o.Enabled && !isVirtual(o.Name) {
-			list = append(list, o)
+		if !o.Connected || !o.Enabled || isVirtual(o.Name) {
+			continue
 		}
+		for _, m := range o.Modes {
+			if m.ID == o.CurrentModeID {
+				o.Width, o.Height, o.Refresh = m.Size.Width, m.Size.Height, m.RefreshRate
+			}
+		}
+		o.Modes, o.CurrentModeID = nil, ""
+		list = append(list, o)
 	}
 	return list
+}
+
+// modeID finds the current ID of the saved mode in a fresh mode list.
+func modeID(saved kscreenOutput, now []kscreenOutput) string {
+	best, diff := "", 1.0 // within 1 Hz
+	for _, o := range now {
+		if o.Name != saved.Name {
+			continue
+		}
+		for _, m := range o.Modes {
+			d := m.RefreshRate - saved.Refresh
+			if d < 0 {
+				d = -d
+			}
+			if m.Size.Width == saved.Width && m.Size.Height == saved.Height && d < diff {
+				best, diff = m.ID, d
+			}
+		}
+	}
+	return best
 }
 
 // Outputs lists the physical displays. On Linux the ID is the KWin output name (e.g. DP-1).
@@ -129,14 +174,15 @@ func isolateArgs(virt string, saved []kscreenOutput, keep []string) []string {
 }
 
 // restoreArgs turns the saved displays back on with their mode, position and priority.
-func restoreArgs(saved []kscreenOutput) []string {
+// now is the current layout, used to look up mode IDs.
+func restoreArgs(saved, now []kscreenOutput) []string {
 	outs := append([]kscreenOutput(nil), saved...)
 	sort.SliceStable(outs, func(i, j int) bool { return outs[i].Priority < outs[j].Priority })
 	var args []string
 	for _, o := range outs {
 		args = append(args, fmt.Sprintf("output.%s.enable", o.Name))
-		if o.CurrentModeID != "" {
-			args = append(args, fmt.Sprintf("output.%s.mode.%s", o.Name, o.CurrentModeID))
+		if id := modeID(o, now); id != "" {
+			args = append(args, fmt.Sprintf("output.%s.mode.%s", o.Name, id))
 		}
 		args = append(args, fmt.Sprintf("output.%s.position.%d,%d", o.Name, o.Pos.X, o.Pos.Y))
 		if o.Priority > 0 {
@@ -149,7 +195,11 @@ func restoreArgs(saved []kscreenOutput) []string {
 // applyRestore turns the saved displays back on and checks that KWin did it:
 // kscreen-doctor exits 0 even when it could not apply a change.
 func applyRestore(run runner, saved []kscreenOutput) error {
-	if out, err := run("kscreen-doctor", restoreArgs(saved)...); err != nil {
+	before, err := readLayout(run)
+	if err != nil {
+		return err
+	}
+	if out, err := run("kscreen-doctor", restoreArgs(saved, before)...); err != nil {
 		return fmt.Errorf("%w: %s", err, out)
 	}
 	now, err := readLayout(run)
