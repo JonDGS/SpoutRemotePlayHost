@@ -7,6 +7,8 @@
 # automatically (Fedora/Arch/Debian/Ubuntu/openSUSE). If headers for the running kernel aren't
 # available (e.g. Arch after a system update) it builds for the newest installed kernel and asks you to reboot.
 # Use --no-driver to skip that part.
+# On KDE Plasma it also makes Steam start with -pipewire (Steam's Wayland desktop capture) through
+# a user copy of steam.desktop. Use --no-steam-pipewire to skip that.
 set -euo pipefail
 
 bin_dir="${HOME}/.local/bin"
@@ -118,9 +120,62 @@ install_driver() {
   fi
 }
 
+# Steam only captures the Wayland desktop when started with -pipewire; without it Remote Play
+# streams a black screen. A user copy of steam.desktop (and of Steam's autostart entry, if any)
+# adds the flag, so Steam launched from the menu or at login gets it. Marked so uninstall only
+# removes our copies. A copy the user made themselves is left alone.
+steam_marker="X-SpoutRemotePlay-Pipewire=true"
+
+steam_desktop_src() {
+  local d
+  for d in /usr/local/share /usr/share; do
+    [[ -f "$d/applications/steam.desktop" ]] && { echo "$d/applications/steam.desktop"; return 0; }
+  done
+  return 1
+}
+
+# Writes $2 from $1 with -pipewire added to every Exec line that runs steam.
+write_steam_pipewire() {
+  local src="$1" dst="$2"
+  # Steam's own autostart entry is edited in place ($src == $dst); any other existing copy is the user's.
+  if [[ "$src" != "$dst" && -f "$dst" ]] && ! grep -qx "$steam_marker" "$dst"; then
+    grep -q -- '-pipewire' "$dst" || warn "$dst is your own copy; add -pipewire to its Exec lines yourself"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  awk -v marker="$steam_marker" '
+    /^Exec=/ && $0 !~ /-pipewire/ { sub(/^Exec=[^ ]*steam/, "& -pipewire") }
+    { print }
+    /^\[Desktop Entry\]$/ && !done { print marker; done = 1 }
+  ' "$src" > "$dst.tmp" && mv "$dst.tmp" "$dst"
+}
+
+setup_steam_pipewire() {
+  local src autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/steam.desktop"
+  src="$(steam_desktop_src)" || { say "Steam's desktop entry not found (Flatpak Steam needs -pipewire added by hand)"; return 0; }
+  write_steam_pipewire "$src" "$data_dir/applications/steam.desktop"
+  [[ -f "$autostart" ]] && write_steam_pipewire "$autostart" "$autostart"
+  command -v update-desktop-database >/dev/null && update-desktop-database -q "$data_dir/applications" 2>/dev/null || true
+  say "Steam will start with -pipewire from now on (restart Steam if it is running)"
+}
+
+remove_steam_pipewire() {
+  local f
+  for f in "$data_dir/applications/steam.desktop" "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/steam.desktop"; do
+    [[ -f "$f" ]] && grep -qx "$steam_marker" "$f" || continue
+    if [[ "$f" == */autostart/* ]]; then
+      # Steam's own autostart entry: put it back as it was, minus our flag and marker.
+      sed -i -e "/^$steam_marker\$/d" -e 's/ -pipewire//' "$f"
+    else
+      rm -f "$f"
+    fi
+  done
+}
+
 if [[ "${1:-}" == "--uninstall" ]]; then
   systemctl --user disable --now spout-host.service 2>/dev/null || true
   rm -f "$unit_dir/spout-host.service" "$bin_dir/spout-host" "$icon_file" "$desktop_file"
+  remove_steam_pipewire
   if [[ -e "$helper" ]]; then
     sudo "$helper" destroy || true
     sudo rm -f "$helper" "$sudoers"
@@ -132,8 +187,15 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   exit 0
 fi
 
-no_driver=0
-if [[ "${1:-}" == "--no-driver" ]]; then no_driver=1; shift; fi
+no_driver=0 steam_pipewire=1
+while [[ "${1:-}" == --no-* ]]; do
+  case "$1" in
+    --no-driver) no_driver=1 ;;
+    --no-steam-pipewire) steam_pipewire=0 ;;
+    *) echo "unknown option $1" >&2; exit 1 ;;
+  esac
+  shift
+done
 src="${1:-$here/spout-host}"
 [[ -x "$src" ]] || { echo "spout-host binary not found at $src" >&2; exit 1; }
 
@@ -146,6 +208,7 @@ if [[ -f "$here/spout-remote-play.png" ]]; then
   command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$data_dir/icons/hicolor" 2>/dev/null || true
   command -v update-desktop-database >/dev/null && update-desktop-database -q "$data_dir/applications" 2>/dev/null || true
 fi
+[[ $steam_pipewire == 0 ]] || ! command -v kscreen-doctor >/dev/null || setup_steam_pipewire
 [[ $no_driver == 1 ]] || install_driver || warn "Virtual display is not set up; the host still runs. Re-run ./install.sh after fixing the above."
 systemctl --user daemon-reload
 systemctl --user enable --now spout-host.service
